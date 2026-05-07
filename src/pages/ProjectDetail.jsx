@@ -5,11 +5,22 @@ import api from '../utils/api';
 
 const statusBadge = (status) => {
   const map = {
-    'todo': 'bg-gray-100 text-gray-700',
-    'in-progress': 'bg-yellow-100 text-yellow-800',
-    'done': 'bg-green-100 text-green-800',
+    'new': 'bg-yellow-100 text-yellow-800',
+    'assigned': 'bg-blue-100 text-blue-800',
+    'in-progress': 'bg-orange-100 text-orange-800',
+    'resolved': 'bg-green-100 text-green-800',
   };
-  return map[status] || map.todo;
+  return map[status] || map.new;
+};
+
+const statusLabel = (status) => {
+  const map = {
+    'new': 'New',
+    'assigned': 'Assigned',
+    'in-progress': 'In Progress',
+    'resolved': 'Resolved',
+  };
+  return map[status] || status;
 };
 
 export default function ProjectDetail() {
@@ -23,7 +34,7 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Task form state
+  // task form
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
@@ -31,10 +42,18 @@ export default function ProjectDetail() {
   const [taskDueDate, setTaskDueDate] = useState('');
   const [taskError, setTaskError] = useState('');
 
-  // Member form state
+  // member form
   const [showMemberForm, setShowMemberForm] = useState(false);
   const [memberToAdd, setMemberToAdd] = useState('');
   const [memberError, setMemberError] = useState('');
+
+  // reject modal
+  const [rejectingTaskId, setRejectingTaskId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  // reassign form (admin)
+  const [reassigningTaskId, setReassigningTaskId] = useState(null);
+  const [reassignTo, setReassignTo] = useState('');
 
   const loadAll = async () => {
     try {
@@ -92,6 +111,41 @@ export default function ProjectDetail() {
     }
   };
 
+  const handleAccept = async (taskId) => {
+    try {
+      await api.post(`/tasks/${taskId}/accept`);
+      loadAll();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to accept');
+    }
+  };
+
+  const handleReject = async () => {
+    try {
+      await api.post(`/tasks/${rejectingTaskId}/reject`, {
+        reason: rejectReason,
+      });
+      setRejectingTaskId(null);
+      setRejectReason('');
+      loadAll();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to reject');
+    }
+  };
+
+  const handleReassign = async () => {
+    try {
+      await api.put(`/tasks/${reassigningTaskId}`, {
+        assignedTo: reassignTo,
+      });
+      setReassigningTaskId(null);
+      setReassignTo('');
+      loadAll();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to reassign');
+    }
+  };
+
   const handleDeleteTask = async (taskId) => {
     if (!confirm('Delete this task?')) return;
     try {
@@ -125,22 +179,22 @@ export default function ProjectDetail() {
     }
   };
 
-  const canChangeStatus = (task) => {
-    if (isAdmin) return true;
-    return task.assignedTo && task.assignedTo._id === user._id;
-  };
+  const isAssignedToMe = (task) =>
+    task.assignedTo && task.assignedTo._id === user._id;
 
   const isOverdue = (task) =>
-    task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
+    task.dueDate && task.status !== 'resolved' && new Date(task.dueDate) < new Date();
 
   const availableUsersToAdd = allUsers.filter(
     (u) => !project?.members?.some((m) => m._id === u._id)
   );
 
+  // 4 columns ke liye tasks group karte hain
   const groupedTasks = {
-    todo: tasks.filter((t) => t.status === 'todo'),
+    'new': tasks.filter((t) => t.status === 'new'),
+    'assigned': tasks.filter((t) => t.status === 'assigned'),
     'in-progress': tasks.filter((t) => t.status === 'in-progress'),
-    done: tasks.filter((t) => t.status === 'done'),
+    'resolved': tasks.filter((t) => t.status === 'resolved'),
   };
 
   if (loading) return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -279,6 +333,10 @@ export default function ProjectDetail() {
             <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded font-medium">
               Create Task
             </button>
+            <p className="text-xs text-gray-500">
+              ℹ️ Task will be created in <strong>"new"</strong> status.
+              The assignee must accept it before work can begin.
+            </p>
           </form>
         )}
 
@@ -288,54 +346,176 @@ export default function ProjectDetail() {
             <p>No tasks yet.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-0 md:divide-x divide-gray-200">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-0 lg:divide-x divide-gray-200">
             {Object.entries(groupedTasks).map(([status, statusTasks]) => (
-              <div key={status} className="p-4">
+              <div key={status} className="p-4 border-b lg:border-b-0 border-gray-200 lg:border-b-0">
                 <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
                   <span className={`px-2 py-0.5 rounded-full text-xs ${statusBadge(status)}`}>
-                    {status}
+                    {statusLabel(status)}
                   </span>
                   <span className="text-gray-400">({statusTasks.length})</span>
                 </h3>
                 <div className="space-y-2">
-                  {statusTasks.map((task) => (
-                    <div key={task._id} className={`bg-gray-50 rounded p-3 border ${isOverdue(task) ? 'border-red-300' : 'border-gray-200'}`}>
-                      <div className="flex items-start justify-between mb-1">
-                        <p className="font-medium text-gray-800 text-sm">{task.title}</p>
-                        {isAdmin && (
-                          <button
-                            onClick={() => handleDeleteTask(task._id)}
-                            className="text-red-400 hover:text-red-600 text-xs ml-2"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                      {task.description && <p className="text-xs text-gray-500 mb-2">{task.description}</p>}
-                      <div className="text-xs text-gray-500 space-y-1">
-                        {task.assignedTo && (
-                          <div>👤 {task.assignedTo.name}</div>
-                        )}
-                        {task.dueDate && (
-                          <div className={isOverdue(task) ? 'text-red-600 font-medium' : ''}>
-                            📅 {new Date(task.dueDate).toLocaleDateString()}
-                            {isOverdue(task) && ' (OVERDUE)'}
+                  {statusTasks.map((task) => {
+                    const pendingAcceptance = task.status === 'new' && isAssignedToMe(task);
+                    return (
+                      <div
+                        key={task._id}
+                        className={`bg-gray-50 rounded p-3 border ${
+                          pendingAcceptance
+                            ? 'border-yellow-400 ring-2 ring-yellow-200'
+                            : isOverdue(task)
+                            ? 'border-red-300'
+                            : 'border-gray-200'
+                        }`}
+                      >
+                        {pendingAcceptance && (
+                          <div className="bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-1 rounded mb-2 text-center">
+                            🔔 PENDING YOUR ACCEPTANCE
                           </div>
                         )}
+
+                        <div className="flex items-start justify-between mb-1">
+                          <p className="font-medium text-gray-800 text-sm">{task.title}</p>
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeleteTask(task._id)}
+                              className="text-red-400 hover:text-red-600 text-xs ml-2"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        {task.description && (
+                          <p className="text-xs text-gray-500 mb-2">{task.description}</p>
+                        )}
+
+                        <div className="text-xs text-gray-500 space-y-1 mb-2">
+                          {task.assignedTo ? (
+                            <div>👤 {task.assignedTo.name}</div>
+                          ) : (
+                            <div className="text-orange-600">⚠️ Unassigned</div>
+                          )}
+                          {task.dueDate && (
+                            <div className={isOverdue(task) ? 'text-red-600 font-medium' : ''}>
+                              📅 {new Date(task.dueDate).toLocaleDateString()}
+                              {isOverdue(task) && ' (OVERDUE)'}
+                            </div>
+                          )}
+                          {task.rejectionReason && (
+                            <div className="text-red-600 italic mt-1 p-1 bg-red-50 rounded">
+                              Previously rejected: {task.rejectionReason}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Member actions based on status */}
+                        {!isAdmin && isAssignedToMe(task) && (
+                          <div className="space-y-1">
+                            {task.status === 'new' && (
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => handleAccept(task._id)}
+                                  className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs py-1 rounded font-medium"
+                                >
+                                  ✓ Accept
+                                </button>
+                                <button
+                                  onClick={() => setRejectingTaskId(task._id)}
+                                  className="flex-1 bg-red-500 hover:bg-red-600 text-white text-xs py-1 rounded font-medium"
+                                >
+                                  ✕ Reject
+                                </button>
+                              </div>
+                            )}
+                            {task.status === 'assigned' && (
+                              <button
+                                onClick={() => handleStatusChange(task._id, 'in-progress')}
+                                className="w-full bg-orange-500 hover:bg-orange-600 text-white text-xs py-1 rounded font-medium"
+                              >
+                                ▶ Start Working
+                              </button>
+                            )}
+                            {task.status === 'in-progress' && (
+                              <button
+                                onClick={() => handleStatusChange(task._id, 'resolved')}
+                                className="w-full bg-green-600 hover:bg-green-700 text-white text-xs py-1 rounded font-medium"
+                              >
+                                ✓ Mark Resolved
+                              </button>
+                            )}
+                            {task.status === 'resolved' && (
+                              <div className="text-center text-xs text-green-700 font-medium">
+                                ✓ Completed
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Admin actions - reassign for unassigned tasks */}
+                        {isAdmin && !task.assignedTo && (
+                          <div>
+                            {reassigningTaskId === task._id ? (
+                              <div className="space-y-1">
+                                <select
+                                  value={reassignTo}
+                                  onChange={(e) => setReassignTo(e.target.value)}
+                                  className="w-full text-xs px-2 py-1 border border-gray-300 rounded"
+                                >
+                                  <option value="">Select member...</option>
+                                  {project.members?.map((m) => (
+                                    <option key={m._id} value={m._id}>
+                                      {m.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={handleReassign}
+                                    disabled={!reassignTo}
+                                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white text-xs py-1 rounded"
+                                  >
+                                    Assign
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setReassigningTaskId(null);
+                                      setReassignTo('');
+                                    }}
+                                    className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 text-xs py-1 rounded"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setReassigningTaskId(task._id)}
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-1 rounded font-medium"
+                              >
+                                Reassign
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Admin can also override status manually */}
+                        {isAdmin && task.assignedTo && (
+                          <select
+                            value={task.status}
+                            onChange={(e) => handleStatusChange(task._id, e.target.value)}
+                            className="mt-1 w-full text-xs px-2 py-1 border border-gray-300 rounded"
+                          >
+                            <option value="new">New</option>
+                            <option value="assigned">Assigned</option>
+                            <option value="in-progress">In Progress</option>
+                            <option value="resolved">Resolved</option>
+                          </select>
+                        )}
                       </div>
-                      {canChangeStatus(task) && (
-                        <select
-                          value={task.status}
-                          onChange={(e) => handleStatusChange(task._id, e.target.value)}
-                          className="mt-2 w-full text-xs px-2 py-1 border border-gray-300 rounded"
-                        >
-                          <option value="todo">To Do</option>
-                          <option value="in-progress">In Progress</option>
-                          <option value="done">Done</option>
-                        </select>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                   {statusTasks.length === 0 && (
                     <p className="text-xs text-gray-400 italic">No tasks</p>
                   )}
@@ -345,6 +525,43 @@ export default function ProjectDetail() {
           </div>
         )}
       </div>
+
+      {/* Reject modal */}
+      {rejectingTaskId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Reject Task</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              The task will go back to admin for reassignment. Please share why you're rejecting (optional).
+            </p>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Reason for rejection (optional)"
+              rows="3"
+              maxLength="300"
+              className="w-full px-3 py-2 border border-gray-300 rounded mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setRejectingTaskId(null);
+                  setRejectReason('');
+                }}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReject}
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-medium"
+              >
+                Confirm Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
